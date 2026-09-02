@@ -2,7 +2,7 @@
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from fastapi import Depends, HTTPException, Request
 from core import api, db, now_utc, gen_id, get_current_user, get_optional_user, require_role
 from models import (

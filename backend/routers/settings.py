@@ -26,6 +26,7 @@ SECRET_FIELDS = {
     "instagram_access_token",
     "zoom_client_secret",
     "twilio_auth_token",
+    "openai_api_key",
 }
 
 # Map of setting -> env var to fall back on when the DB value is empty.
@@ -54,6 +55,7 @@ ENV_FALLBACK = {
     "twilio_account_sid": "TWILIO_ACCOUNT_SID",
     "twilio_auth_token": "TWILIO_AUTH_TOKEN",
     "twilio_whatsapp_from": "TWILIO_WHATSAPP_FROM",
+    "openai_api_key": "OPENAI_API_KEY",
 }
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
@@ -135,6 +137,10 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "assistant_enabled": True,
     "assistant_greeting": "Hi, I'm Tony's assistant. How can I help you find the right yoga path today?",
     "assistant_popup_delay": 8,           # seconds before the popup appears on the homepage
+    # OpenAI key powers chat + voice (Whisper STT + TTS) when self-hosting off the Emergent platform.
+    # When empty, the app falls back to the Emergent universal key (works only on Emergent hosting).
+    "openai_api_key": "",
+    "assistant_openai_model": "gpt-4o-mini",
 }
 
 # Fields safe to expose to unauthenticated clients (frontend bootstrapping).

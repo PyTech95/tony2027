@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { Lock, Play, CheckCircle2, RotateCcw, Clock, Award, ShieldCheck, Sparkles, ClipboardCheck, PlayCircle } from "lucide-react";
+import { Lock, Play, CheckCircle2, RotateCcw, Clock, Award, ShieldCheck, Sparkles, ClipboardCheck, PlayCircle, ShoppingBag, Tag } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { cart } from "@/lib/cart";
 import { useAuth } from "@/lib/auth";
 import PageHeader from "@/components/PageHeader";
 import Spinner from "@/components/Spinner";

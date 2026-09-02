@@ -53,6 +53,9 @@ function SettingsPane() {
         assistant_enabled: data.assistant_enabled !== false,
         assistant_greeting: data.assistant_greeting || "",
         assistant_popup_delay: data.assistant_popup_delay ?? 8,
+        openai_api_key: "",
+        openai_api_key_set: !!data.openai_api_key_set,
+        openai_api_key_from_env: !!data.openai_api_key_from_env,
         social_whatsapp: data.social_whatsapp || "",
         zoom_enabled: !!data.zoom_enabled,
         zoom_account_id: data.zoom_account_id || "",
@@ -463,11 +466,34 @@ function AssistantCard({ form, set, inputCls, card }) {
         <div className="flex items-center gap-2 text-[#B25A45]"><MessageCircle className="h-4 w-4" /><span className="eyebrow !text-[11px]">AI Assistant · Homepage</span></div>
         <Toggle checked={form.assistant_enabled} onChange={(v) => set("assistant_enabled", v)} tid="settings-assistant-enabled" />
       </div>
-      <p className="text-[12px] text-[#6B7269] -mt-1">A calm chat + voice helper that greets visitors, recommends courses, and captures leads. Powered by the Emergent universal key.</p>
+      <p className="text-[12px] text-[#6B7269] -mt-1">A calm chat + voice helper that greets visitors, recommends courses, and captures leads.</p>
       <Field label="Greeting message"><textarea data-testid="settings-assistant-greeting" rows={2} className={inputCls} value={form.assistant_greeting} onChange={(e) => set("assistant_greeting", e.target.value)} /></Field>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Popup delay (seconds)"><input data-testid="settings-assistant-delay" type="number" min="0" className={inputCls} value={form.assistant_popup_delay} onChange={(e) => set("assistant_popup_delay", e.target.value)} /></Field>
         <Field label="WhatsApp number" hint="For the 'Chat with Tony' handoff (with country code)."><input data-testid="settings-assistant-whatsapp" className={inputCls} value={form.social_whatsapp} onChange={(e) => set("social_whatsapp", e.target.value)} placeholder="+34 600 000 000" /></Field>
+      </div>
+
+      <div className="rounded-xl bg-[#F7F2EC] border border-[#E7D9CB] p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] uppercase tracking-widest font-bold text-[#B25A45]">OpenAI API key</span>
+          {form.openai_api_key_set
+            ? <span className="text-[10px] font-semibold text-[#3E7C57] bg-[#E4F0E8] rounded-full px-2 py-0.5" data-testid="settings-openai-status">● Configured{form.openai_api_key_from_env ? " (env)" : ""}</span>
+            : <span className="text-[10px] font-semibold text-[#8A6D3B] bg-[#F3E7C9] rounded-full px-2 py-0.5" data-testid="settings-openai-status">Using Emergent key</span>}
+        </div>
+        <p className="text-[11px] text-[#6B7269] leading-relaxed">
+          Paste your own OpenAI key to power the assistant's chat + voice (Whisper &amp; text-to-speech) when self-hosting on your VPS.
+          Leave blank to keep using the built-in Emergent key on Emergent hosting. Stored securely on the server, never shown in full.
+        </p>
+        <input
+          data-testid="settings-openai-key"
+          type="password"
+          className={inputCls}
+          value={form.openai_api_key}
+          onChange={(e) => set("openai_api_key", e.target.value)}
+          placeholder={form.openai_api_key_set ? "••••••••  (leave blank to keep current)" : "sk-..."}
+          autoComplete="off"
+        />
+        <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-[11px] font-semibold text-[#B25A45] hover:opacity-70">Get an OpenAI key →</a>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" onClick={() => setShowLeads((v) => !v)} data-testid="settings-assistant-leads-toggle" className="pill pill-ghost !py-1.5 !px-3 !text-xs">

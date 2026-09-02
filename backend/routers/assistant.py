@@ -19,6 +19,20 @@ load_dotenv()
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
 ASSISTANT_MODEL = ("anthropic", "claude-sonnet-4-6")
 
+
+async def _openai_key() -> Optional[str]:
+    """Admin-configured OpenAI key (or OPENAI_API_KEY env). Preferred on a self-hosted VPS."""
+    try:
+        k = await get_setting("openai_api_key")
+    except Exception:
+        k = None
+    return (k or "").strip() or None
+
+
+def _openai_client(key: str):
+    from openai import AsyncOpenAI  # lazy import
+    return AsyncOpenAI(api_key=key, timeout=60.0, max_retries=2)
+
 PERSONA = (
     "You are Tony's Assistant — the warm, knowledgeable voice guide for Tony Sanchez Yoga, "
     "led by Tony Sanchez, a master teacher with ~50 years on the mat (Ghosh/Bikram lineage), based in Málaga, Spain. "
@@ -141,10 +155,25 @@ async def _generate_reply(session_id: Optional[str], msg: str, user: Optional[di
     history: List[dict] = (session or {}).get("messages", [])
 
     reply_text = "I'm here to help! Could you tell me a bit about your goals — flexibility, stress relief, or building strength?"
-    if EMERGENT_LLM_KEY:
+    system = PERSONA + "\n\n" + await _catalog_text()
+    okey = await _openai_key()
+    if okey:
+        # Self-host path: user's own OpenAI key (chat + voice all on one key).
+        try:
+            client = _openai_client(okey)
+            messages = [{"role": "system", "content": system}]
+            for m in history[-8:]:
+                messages.append({"role": "assistant" if m.get("role") == "assistant" else "user", "content": m.get("text", "")})
+            messages.append({"role": "user", "content": msg})
+            model = (await get_setting("assistant_openai_model")) or "gpt-4o-mini"
+            comp = await client.chat.completions.create(model=model, messages=messages, temperature=0.4, max_tokens=220)
+            reply_text = (comp.choices[0].message.content or "").strip() or reply_text
+            await client.close()
+        except Exception as e:
+            logger.warning(f"assistant chat (openai) failed: {e}")
+    elif EMERGENT_LLM_KEY:
         try:
             from emergentintegrations.llm.chat import LlmChat, UserMessage  # type: ignore
-            system = PERSONA + "\n\n" + await _catalog_text()
             convo = "\n".join(f"{m['role'].upper()}: {m['text']}" for m in history[-8:])
             prompt = (f"Conversation so far:\n{convo}\n\n" if convo else "") + f"VISITOR: {msg}\n\nReply as the assistant:"
             chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"assist-{sid}", system_message=system).with_model(*ASSISTANT_MODEL)
@@ -168,16 +197,28 @@ async def _generate_reply(session_id: Optional[str], msg: str, user: Optional[di
 
 
 async def _tts_base64(text: str, voice: str = "nova") -> str:
-    """Synthesize spoken audio (mp3) as base64 via the Emergent key. '' on failure."""
-    if not EMERGENT_LLM_KEY or not text.strip():
+    """Synthesize spoken audio (mp3) as base64. Prefers the admin OpenAI key, else Emergent. '' on failure."""
+    if not text.strip():
         return ""
-    try:
-        from emergentintegrations.llm.openai import OpenAITextToSpeech  # type: ignore
-        tts = OpenAITextToSpeech(api_key=EMERGENT_LLM_KEY)
-        return await tts.generate_speech_base64(text=text[:900], voice=voice, response_format="mp3")
-    except Exception as e:
-        logger.warning(f"assistant TTS failed: {e}")
-        return ""
+    okey = await _openai_key()
+    if okey:
+        try:
+            client = _openai_client(okey)
+            resp = await client.audio.speech.create(model="tts-1", voice=voice, input=text[:4000], response_format="mp3")
+            data = resp.content
+            await client.close()
+            return base64.b64encode(data).decode("ascii")
+        except Exception as e:
+            logger.warning(f"assistant TTS (openai) failed: {e}")
+            return ""
+    if EMERGENT_LLM_KEY:
+        try:
+            from emergentintegrations.llm.openai import OpenAITextToSpeech  # type: ignore
+            tts = OpenAITextToSpeech(api_key=EMERGENT_LLM_KEY)
+            return await tts.generate_speech_base64(text=text[:900], voice=voice, response_format="mp3")
+        except Exception as e:
+            logger.warning(f"assistant TTS failed: {e}")
+    return ""
 
 
 class TTSIn(BaseModel):
@@ -204,7 +245,8 @@ async def assistant_voice(
     return spoken audio (OpenAI TTS)."""
     if (await get_setting("assistant_enabled")) is False:
         raise HTTPException(403, "Assistant is disabled.")
-    if not EMERGENT_LLM_KEY:
+    okey = await _openai_key()
+    if not okey and not EMERGENT_LLM_KEY:
         raise HTTPException(503, "Voice is not available right now.")
     raw = await audio.read()
     if not raw:
@@ -219,14 +261,25 @@ async def assistant_voice(
     transcript = ""
     tmp_path = None
     try:
-        from emergentintegrations.llm.openai import OpenAISpeechToText  # type: ignore
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tf:
-            tf.write(raw)
-            tmp_path = tf.name
-        stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
-        with open(tmp_path, "rb") as f:
-            resp = await stt.transcribe(file=f, model="whisper-1", response_format="text")
-        transcript = (resp if isinstance(resp, str) else getattr(resp, "text", "")).strip()
+        if okey:
+            # Self-host path: transcribe directly via the user's OpenAI key (no temp file needed).
+            client = _openai_client(okey)
+            resp = await client.audio.transcriptions.create(
+                model="whisper-1",
+                file=(audio.filename or f"voice{suffix}", raw, audio.content_type or "audio/webm"),
+                response_format="text",
+            )
+            await client.close()
+            transcript = (resp if isinstance(resp, str) else getattr(resp, "text", "")).strip()
+        else:
+            from emergentintegrations.llm.openai import OpenAISpeechToText  # type: ignore
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tf:
+                tf.write(raw)
+                tmp_path = tf.name
+            stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
+            with open(tmp_path, "rb") as f:
+                resp = await stt.transcribe(file=f, model="whisper-1", response_format="text")
+            transcript = (resp if isinstance(resp, str) else getattr(resp, "text", "")).strip()
     except Exception as e:
         logger.warning(f"assistant STT failed: {e}")
         raise HTTPException(502, "Could not understand the audio. Please try again.")
