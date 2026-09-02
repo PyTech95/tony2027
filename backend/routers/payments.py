@@ -7,10 +7,36 @@ from fastapi import Depends, HTTPException, Request
 from core import api, db, logger, now_utc, gen_id, get_current_user
 from models import CheckoutRequest
 from routers.settings import get_setting
-import stripe  # re-exported by emergentintegrations; used for subscription-mode only
-from emergentintegrations.payments.stripe.checkout import (
-    StripeCheckout, CheckoutSessionRequest, CheckoutSessionResponse, CheckoutStatusResponse,
-)
+import stripe  # official Stripe Python SDK
+
+# Currencies Stripe treats as zero-decimal (amount is NOT multiplied by 100).
+_ZERO_DECIMAL = {"bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga", "pyg", "rwf", "ugx", "vnd", "vuv", "xaf", "xof", "xpf"}
+
+
+def _to_minor_units(amount: float, currency: str) -> int:
+    if (currency or "").lower() in _ZERO_DECIMAL:
+        return int(round(float(amount)))
+    return int(round(float(amount) * 100))
+
+
+async def _create_onetime_session(*, amount, currency, success_url, cancel_url, metadata, customer_email, product_name):
+    """One-time Checkout session via the official Stripe SDK."""
+    stripe.api_key = await _stripe_api_key()
+    return stripe.checkout.Session.create(
+        mode="payment",
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata=metadata,
+        customer_email=customer_email,
+        line_items=[{
+            "price_data": {
+                "currency": (currency or "usd").lower(),
+                "unit_amount": _to_minor_units(amount, currency),
+                "product_data": {"name": product_name or "Tony Yoga"},
+            },
+            "quantity": 1,
+        }],
+    )
 
 
 # Map our billing_cycle field to Stripe recurring interval params.
@@ -31,7 +57,7 @@ async def _stripe_api_key() -> str:
 async def _create_subscription_session(*, user: dict, plan: dict, origin_url: str) -> dict:
     """Create a Stripe Checkout session in subscription mode with optional trial_period_days.
 
-    Uses the raw stripe SDK because emergentintegrations only supports one-time payments.
+    Uses the official Stripe SDK in subscription mode.
     Returns {url, session_id, amount, currency, metadata}.
     """
     stripe.api_key = await _stripe_api_key()
@@ -255,9 +281,6 @@ async def create_checkout(payload: CheckoutRequest, request: Request, user: dict
         })
         return {"url": session["url"], "session_id": session["session_id"]}
 
-    api_key = await _stripe_api_key()
-    host_url = str(request.base_url)
-    stripe_checkout = StripeCheckout(api_key=api_key, webhook_url=f"{host_url}api/webhook/stripe")
     amount, currency, meta = await _resolve_price(payload.item_type, payload.item_id, payload.quantity)
 
     # Gift-card store credit: reserve and deduct from the amount to charge.
@@ -279,17 +302,18 @@ async def create_checkout(payload: CheckoutRequest, request: Request, user: dict
         "item_type": payload.item_type, "item_id": payload.item_id,
         "quantity": str(payload.quantity), **meta, **(payload.metadata or {}),
     }
-    req = CheckoutSessionRequest(
-        amount=float(charge_amount), currency=currency,
-        success_url=success_url, cancel_url=cancel_url, metadata=metadata,
-    )
     try:
-        session: CheckoutSessionResponse = await stripe_checkout.create_checkout_session(req)
+        session = await _create_onetime_session(
+            amount=float(charge_amount), currency=currency,
+            success_url=success_url, cancel_url=cancel_url, metadata=metadata,
+            customer_email=user.get("email"),
+            product_name=meta.get("product_name") or meta.get("title") or meta.get("name"),
+        )
     except Exception:
         await _release_store_credit(user["id"], credit_applied)
         raise
     await db.payment_transactions.insert_one({
-        "id": gen_id(), "session_id": session.session_id,
+        "id": gen_id(), "session_id": session.id,
         "user_id": user["id"], "user_email": user["email"],
         "amount": float(charge_amount), "currency": currency,
         "credit_applied": credit_applied,
@@ -299,7 +323,7 @@ async def create_checkout(payload: CheckoutRequest, request: Request, user: dict
         "mode": "payment",
         "created_at": now_utc().isoformat(),
     })
-    return {"url": session.url, "session_id": session.session_id}
+    return {"url": session.url, "session_id": session.id}
 
 
 @api.get("/checkout/status/{session_id}")
@@ -308,13 +332,13 @@ async def checkout_status(session_id: str, request: Request):
     if not txn:
         raise HTTPException(404, "Transaction not found")
 
-    # Subscription-mode sessions: query Stripe directly because emergentintegrations
-    # only supports one-time payment-mode sessions.
+    # Subscription-mode sessions: query Stripe directly (retrieve + expand subscription)
+    # so we can reflect trial/active status accurately.
     if txn.get("mode") == "subscription":
         stripe.api_key = await _stripe_api_key()
         try:
             s = stripe.checkout.Session.retrieve(session_id, expand=["subscription"])
-        except stripe.error.StripeError as e:
+        except Exception as e:
             logger.warning(f"Stripe subscription status lookup failed for {session_id}: {e}")
             raise HTTPException(404, "Session not found at Stripe")
         sub = s.get("subscription")
@@ -342,11 +366,9 @@ async def checkout_status(session_id: str, request: Request):
             "metadata": s.get("metadata", {}) or {},
         }
 
-    api_key = await _stripe_api_key()
-    host_url = str(request.base_url)
-    stripe_checkout = StripeCheckout(api_key=api_key, webhook_url=f"{host_url}api/webhook/stripe")
+    stripe.api_key = await _stripe_api_key()
     try:
-        status: CheckoutStatusResponse = await stripe_checkout.get_checkout_status(session_id)
+        status = stripe.checkout.Session.retrieve(session_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -364,7 +386,7 @@ async def checkout_status(session_id: str, request: Request):
         )
     return {
         "status": status.status, "payment_status": status.payment_status,
-        "amount_total": status.amount_total, "currency": status.currency, "metadata": status.metadata,
+        "amount_total": status.amount_total, "currency": status.currency, "metadata": dict(status.metadata or {}),
     }
 
 
@@ -559,47 +581,49 @@ async def _fulfill_payment(txn: dict):
 
 @api.post("/webhook/stripe")
 async def stripe_webhook(request: Request):
-    """Webhook handler — emergentintegrations covers one-time checkout.session.completed,
-    we additionally listen to subscription lifecycle events to keep our `subscriptions`
-    collection in sync with Stripe (trial → active, cancellations, renewals)."""
+    """Official Stripe webhook. Verifies the signature when a webhook secret is configured,
+    fulfills one-time payments (checkout.session.completed), and keeps subscriptions in sync.
+    Idempotent: fulfillment only runs when the transaction is not already marked paid."""
     body = await request.body()
     sig = request.headers.get("Stripe-Signature")
-    api_key = await _stripe_api_key()
-    host_url = str(request.base_url)
+    stripe.api_key = await _stripe_api_key()
+    webhook_secret = await get_setting("stripe_webhook_secret") or os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 
-    # Try emergentintegrations first (handles checkout.session.completed for one-time payments)
-    stripe_checkout = StripeCheckout(api_key=api_key, webhook_url=f"{host_url}api/webhook/stripe")
-    handled = False
-    try:
-        resp = await stripe_checkout.handle_webhook(body, sig)
-        if resp.payment_status == "paid":
-            txn = await db.payment_transactions.find_one({"session_id": resp.session_id})
-            if txn and txn.get("payment_status") != "paid":
-                await db.payment_transactions.update_one(
-                    {"session_id": resp.session_id},
-                    {"$set": {"payment_status": "paid", "status": "complete", "completed_at": now_utc().isoformat()}},
-                )
-                await _fulfill_payment(txn)
-        handled = True
-    except Exception as e:
-        # Not a payment session event — fall through to manual subscription handling.
-        logger.info(f"Webhook not handled by StripeCheckout ({e}); trying subscription handler.")
-
-    # Subscription lifecycle (V1: best-effort, no signature verification when
-    # STRIPE_WEBHOOK_SECRET is unset — Stripe's outbound IP allowlist + the request body
-    # being valid JSON keeps this safe enough for staging. Production should set the secret
-    # in admin Settings.).
-    try:
-        stripe.api_key = api_key
-        webhook_secret = await get_setting("stripe_webhook_secret") or os.environ.get("STRIPE_WEBHOOK_SECRET", "")
-        if webhook_secret:
+    if webhook_secret:
+        try:
             event = stripe.Webhook.construct_event(body, sig, webhook_secret)
-        else:
-            import json
+        except Exception as e:
+            logger.warning(f"Stripe webhook signature verification failed: {e}")
+            raise HTTPException(400, "Invalid webhook signature")
+    else:
+        # No secret configured (staging) — parse the body without verification.
+        import json
+        try:
             event = json.loads(body.decode("utf-8"))
-        etype = event.get("type")
-        if etype in ("customer.subscription.updated", "customer.subscription.created", "customer.subscription.deleted"):
-            sub = event["data"]["object"]
+        except Exception as e:
+            logger.exception(f"Webhook parse error: {e}")
+            raise HTTPException(400, "Invalid webhook")
+
+    etype = event.get("type") if isinstance(event, dict) else event["type"]
+    obj = (event.get("data", {}) or {}).get("object", {}) if isinstance(event, dict) else event["data"]["object"]
+
+    try:
+        # One-time payment completion (idempotent fulfillment).
+        if etype in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
+            session_id = obj.get("id")
+            paid = obj.get("payment_status") == "paid" or obj.get("status") == "complete"
+            if session_id and paid:
+                txn = await db.payment_transactions.find_one({"session_id": session_id})
+                if txn and txn.get("payment_status") != "paid":
+                    await db.payment_transactions.update_one(
+                        {"session_id": session_id},
+                        {"$set": {"payment_status": "paid", "status": "complete", "completed_at": now_utc().isoformat()}},
+                    )
+                    await _fulfill_payment(txn)
+
+        # Subscription lifecycle sync (trial → active, renewals, cancellations).
+        elif etype in ("customer.subscription.updated", "customer.subscription.created", "customer.subscription.deleted"):
+            sub = obj
             sub_id = sub.get("id")
             sub_status = sub.get("status")  # trialing | active | past_due | canceled | unpaid
             current_period_end = sub.get("current_period_end")  # unix ts
@@ -608,16 +632,10 @@ async def stripe_webhook(request: Request):
                 end_iso = datetime.fromtimestamp(current_period_end).isoformat()
                 update["end_date"] = end_iso
                 update["next_billing_date"] = end_iso
-            await db.subscriptions.update_many(
-                {"stripe_subscription_id": sub_id},
-                {"$set": update},
-            )
+            await db.subscriptions.update_many({"stripe_subscription_id": sub_id}, {"$set": update})
             logger.info(f"Subscription {sub_id} synced → {sub_status}")
-        handled = True
     except Exception as e:
-        if not handled:
-            logger.exception(f"Webhook error: {e}")
-            raise HTTPException(400, "Invalid webhook")
-        logger.warning(f"Subscription webhook step failed but checkout step ok: {e}")
+        logger.exception(f"Webhook handling error for {etype}: {e}")
+        raise HTTPException(400, "Webhook handling failed")
 
     return {"received": True}

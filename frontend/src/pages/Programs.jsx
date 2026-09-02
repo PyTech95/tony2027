@@ -13,7 +13,7 @@ export default function Programs() {
   const { user } = useAuth();
 
   useEffect(() => {
-    api.get("/programs").then(({ data }) => setRows(data)).catch(() => setRows([]));
+    api.get("/programs").then(({ data }) => setRows(Array.isArray(data) ? data : (data?.programs || data?.data || data?.items || []))).catch(() => setRows([]));
     api.get("/bundles").then(({ data }) => setBundles(data || [])).catch(() => setBundles([]));
   }, []);
 

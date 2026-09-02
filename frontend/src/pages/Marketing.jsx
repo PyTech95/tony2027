@@ -147,7 +147,22 @@ function Story() {
 function Programs() {
   const { t } = useTranslation();
   const [rows, setRows] = useState([]);
-  useEffect(() => { api.get("/programs").then(({ data }) => setRows(data)).catch(() => {}); }, []);
+  useEffect(() => {
+    api.get("/programs")
+      .then(({ data }) => {
+        const programs = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.programs)
+            ? data.programs
+            : Array.isArray(data?.data)
+              ? data.data
+              : Array.isArray(data?.items)
+                ? data.items
+                : [];
+        setRows(programs);
+      })
+      .catch(() => setRows([]));
+  }, []);
   return (
     <section id="programs" className="bg-[#1C221F] text-[#FAFAF7] py-14 sm:py-20 lg:py-24">
       <div className="mx-auto max-w-6xl px-4 sm:px-6">

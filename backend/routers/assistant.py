@@ -1,11 +1,9 @@
 """Tony's virtual assistant — homepage chat (+ browser voice on the client).
 
-Uses the Emergent universal key via emergentintegrations (Claude Sonnet 4.6).
+Uses the OpenAI API (chat + Whisper STT + TTS) via the official SDK, keyed from admin settings.
 Captures leads and hands hot leads off to WhatsApp via a wa.me deep link.
 """
-import os
 import base64
-import tempfile
 import asyncio
 from typing import Optional, List
 from urllib.parse import quote
@@ -17,8 +15,6 @@ from core import api, db, gen_id, now_utc, logger, require_role, get_optional_us
 from routers.settings import get_setting
 
 load_dotenv()
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
-ASSISTANT_MODEL = ("anthropic", "claude-sonnet-4-6")
 
 
 async def _openai_key() -> Optional[str]:
@@ -240,18 +236,8 @@ async def _generate_reply(session_id: Optional[str], msg: str, user: Optional[di
             await client.close()
         except Exception as e:
             logger.warning(f"assistant chat (openai) failed: {e}")
-    elif EMERGENT_LLM_KEY:
-        try:
-            from emergentintegrations.llm.chat import LlmChat, UserMessage  # type: ignore
-            convo = "\n".join(f"{m['role'].upper()}: {m['text']}" for m in history[-8:])
-            prompt = (f"Conversation so far:\n{convo}\n\n" if convo else "") + f"VISITOR: {msg}\n\nReply as the assistant:"
-            chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"assist-{sid}", system_message=system).with_model(*ASSISTANT_MODEL)
-            resp = await chat.send_message(UserMessage(text=prompt))
-            reply_text = str(resp).strip() or reply_text
-        except Exception as e:
-            logger.warning(f"assistant chat failed: {e}")
 
-    if okey or EMERGENT_LLM_KEY:
+    if okey:
         await _bump_usage()
 
     now = now_utc().isoformat()
@@ -286,13 +272,6 @@ async def _tts_base64(text: str, voice: Optional[str] = None) -> str:
         except Exception as e:
             logger.warning(f"assistant TTS (openai) failed: {e}")
             return ""
-    if EMERGENT_LLM_KEY:
-        try:
-            from emergentintegrations.llm.openai import OpenAITextToSpeech  # type: ignore
-            tts = OpenAITextToSpeech(api_key=EMERGENT_LLM_KEY)
-            return await tts.generate_speech_base64(text=text[:900], voice=voice, response_format="mp3")
-        except Exception as e:
-            logger.warning(f"assistant TTS failed: {e}")
     return ""
 
 
@@ -321,8 +300,8 @@ async def assistant_voice(
     if (await get_setting("assistant_enabled")) is False:
         raise HTTPException(403, "Assistant is disabled.")
     okey = await _openai_key()
-    if not okey and not EMERGENT_LLM_KEY:
-        raise HTTPException(503, "Voice is not available right now.")
+    if not okey:
+        raise HTTPException(503, "Voice is not available right now. Add an OpenAI API key in Admin → Settings.")
     if not await _usage_ok():
         # Daily cap reached — skip all paid calls (STT/LLM/TTS) and reply gracefully.
         return {"session_id": session_id or gen_id(), "transcript": "", "reply": CAPPED_REPLY,
@@ -333,42 +312,26 @@ async def assistant_voice(
     raw = await audio.read()
     if not raw:
         raise HTTPException(400, "Empty audio.")
-    # Whisper needs a file with a recognised extension; browsers send webm/ogg.
     suffix = ".webm"
     name = (audio.filename or "").lower()
     for ext in (".webm", ".mp3", ".m4a", ".wav", ".mp4", ".ogg"):
         if name.endswith(ext):
-            suffix = ".ogg" if ext == ".ogg" else ext
+            suffix = ext
             break
     transcript = ""
-    tmp_path = None
     try:
-        if okey:
-            # Self-host path: transcribe directly via the user's OpenAI key (no temp file needed).
-            client = _openai_client(okey)
-            resp = await client.audio.transcriptions.create(
-                model="whisper-1",
-                file=(audio.filename or f"voice{suffix}", raw, audio.content_type or "audio/webm"),
-                response_format="text",
-            )
-            await client.close()
-            transcript = (resp if isinstance(resp, str) else getattr(resp, "text", "")).strip()
-        else:
-            from emergentintegrations.llm.openai import OpenAISpeechToText  # type: ignore
-            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tf:
-                tf.write(raw)
-                tmp_path = tf.name
-            stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
-            with open(tmp_path, "rb") as f:
-                resp = await stt.transcribe(file=f, model="whisper-1", response_format="text")
-            transcript = (resp if isinstance(resp, str) else getattr(resp, "text", "")).strip()
+        # Transcribe directly via the OpenAI key (in-memory file tuple, no temp file needed).
+        client = _openai_client(okey)
+        resp = await client.audio.transcriptions.create(
+            model="whisper-1",
+            file=(audio.filename or f"voice{suffix}", raw, audio.content_type or "audio/webm"),
+            response_format="text",
+        )
+        await client.close()
+        transcript = (resp if isinstance(resp, str) else getattr(resp, "text", "")).strip()
     except Exception as e:
         logger.warning(f"assistant STT failed: {e}")
         raise HTTPException(502, "Could not understand the audio. Please try again.")
-    finally:
-        if tmp_path:
-            try: os.unlink(tmp_path)
-            except Exception: pass
 
     if not transcript:
         raise HTTPException(400, "No speech detected.")

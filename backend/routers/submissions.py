@@ -10,7 +10,6 @@ Flow:
 import asyncio
 import json
 import logging
-import os
 import re
 from typing import Optional
 
@@ -22,10 +21,15 @@ from models import AssignmentSubmissionCreate
 
 logger = logging.getLogger(__name__)
 
-# Gemini scoring is optional — if the key isn't set or the call fails we persist the submission
-# with status="pending_review" and a human can score it from /admin.
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
-GEMINI_MODEL = "gemini-2.5-flash"  # fast + multimodal
+# Auto-scoring is optional — if no OpenAI key is set (Admin → Settings) or the call fails, we persist
+# the submission with status="pending_review" so a human can score it from /admin.
+OPENAI_MODEL = "gpt-4o-mini"
+
+
+async def _openai_key() -> Optional[str]:
+    from routers.settings import get_setting
+    k = await get_setting("openai_api_key")
+    return (k or "").strip() or None
 
 
 SCORING_PROMPT = """You are a senior yoga instructor evaluating a student's posture submission.
@@ -66,26 +70,29 @@ def _extract_json(text: str) -> Optional[dict]:
 
 
 async def score_with_gemini(youtube_url: str, posture: str, rubric: str = "") -> Optional[dict]:
-    """Score a yoga posture submission using Gemini. Returns None on any failure.
+    """Auto-score a posture submission via OpenAI. Returns None on any failure (→ manual review).
 
-    Note: the emergentintegrations chat wrapper accepts local files, not URLs. Since we don't
-    download student videos to disk, we send the URL as text context and ask Gemini to imagine
-    grading it. This is a deliberate V1: when Tony provides Vimeo/Mux pipeline keys, we'll swap
-    to direct video bytes via `FileContentWithMimeType`.
+    V1: student videos aren't downloaded to disk, so we send the URL as text context and ask the
+    model to grade against the rubric. Swap to direct video bytes when a Vimeo/Mux pipeline exists.
     """
-    if not EMERGENT_LLM_KEY:
+    key = await _openai_key()
+    if not key:
         return None
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage  # type: ignore
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"score-{gen_id()}",
-            system_message="You are a precise yoga posture grader. Output JSON only.",
-        ).with_model("gemini", GEMINI_MODEL)
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=key, timeout=60.0, max_retries=1)
         prompt = SCORING_PROMPT.format(posture=posture, rubric=rubric or f"Standard alignment for {posture}.")
         prompt += f"\n\nStudent submission video URL: {youtube_url}"
-        response = await chat.send_message(UserMessage(text=prompt))
-        data = _extract_json(str(response))
+        comp = await client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": "You are a precise yoga posture grader. Output JSON only."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.2, max_tokens=400,
+        )
+        await client.close()
+        data = _extract_json(comp.choices[0].message.content or "")
         if not data:
             return None
         score = int(data.get("score", 0))
@@ -94,7 +101,7 @@ async def score_with_gemini(youtube_url: str, posture: str, rubric: str = "") ->
         corrections = [str(c)[:160] for c in (data.get("corrections") or [])[:5]]
         return {"score": score, "feedback": feedback, "corrections": corrections}
     except Exception as e:
-        logger.warning(f"Gemini scoring failed: {e}")
+        logger.warning(f"OpenAI scoring failed: {e}")
         return None
 
 

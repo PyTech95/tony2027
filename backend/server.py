@@ -138,7 +138,7 @@ async def on_startup():
     except Exception as e:
         logger.warning(f"Object storage init failed (uploads will retry on first use): {e}")
 
-    # Enable Stripe (one-time payments via emergentintegrations proxy).
+    # Enable Stripe (one-time payments via the official Stripe SDK).
     # Subscriptions require a real Stripe key — kept OFF; memberships still
     # process as one-time payments (customer pays for one full billing cycle).
     try:
