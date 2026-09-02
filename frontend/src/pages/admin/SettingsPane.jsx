@@ -56,6 +56,8 @@ function SettingsPane() {
         assistant_voice: data.assistant_voice || "nova",
         assistant_daily_limit: data.assistant_daily_limit ?? 300,
         assistant_session_limit: data.assistant_session_limit ?? 25,
+        lead_alert_enabled: data.lead_alert_enabled !== false,
+        lead_alert_whatsapp: data.lead_alert_whatsapp || "",
         openai_api_key: "",
         openai_api_key_set: !!data.openai_api_key_set,
         openai_api_key_from_env: !!data.openai_api_key_from_env,
@@ -527,6 +529,20 @@ function AssistantCard({ form, set, inputCls, card }) {
           <UsageChart history={usage.history || []} />
         </div>
       )}
+
+      <div className="rounded-xl bg-[#F7F2EC] border border-[#E7D9CB] p-3 space-y-2" data-testid="settings-lead-alert">
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] uppercase tracking-widest font-bold text-[#B25A45]">WhatsApp me on new leads</span>
+          <Toggle checked={form.lead_alert_enabled} onChange={(v) => set("lead_alert_enabled", v)} tid="settings-lead-alert-toggle" />
+        </div>
+        <p className="text-[11px] text-[#6B7269] leading-relaxed">
+          Get an instant WhatsApp the moment the assistant captures a lead (name, email, phone &amp; interest) so you can follow up fast.
+          Requires WhatsApp (Twilio) to be set up in the WhatsApp settings card.
+        </p>
+        <Field label="Alert number" hint="Where to send lead alerts. Leave blank to use your WhatsApp number above.">
+          <input data-testid="settings-lead-alert-number" className={inputCls} value={form.lead_alert_whatsapp} onChange={(e) => set("lead_alert_whatsapp", e.target.value)} placeholder={form.social_whatsapp || "+34 600 000 000"} />
+        </Field>
+      </div>
 
       <div className="rounded-xl bg-[#F7F2EC] border border-[#E7D9CB] p-3 space-y-2">
         <div className="flex items-center justify-between">

@@ -144,6 +144,9 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "assistant_voice": "nova",            # OpenAI TTS voice: alloy|echo|fable|onyx|nova|shimmer
     "assistant_daily_limit": 300,         # max AI turns/day (0 = unlimited) — guards against runaway OpenAI spend
     "assistant_session_limit": 25,        # max AI turns per visitor session (0 = unlimited)
+    # New-lead WhatsApp alert to the owner (requires WhatsApp/Twilio configured below).
+    "lead_alert_enabled": True,
+    "lead_alert_whatsapp": "",            # owner number for alerts; falls back to social_whatsapp
 }
 
 # Fields safe to expose to unauthenticated clients (frontend bootstrapping).

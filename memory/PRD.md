@@ -427,3 +427,16 @@ User choices: Printful auto-confirm BUT only on LIVE payments (skip in sandbox);
 - Session cap: setting `assistant_session_limit` (default 25, 0=unlimited). Enforced at start of /assistant/chat + /assistant/voice via `_session_ok(sid)` (reads `turns` on the chatbot_sessions doc, incremented once per real AI turn in _generate_reply). When exceeded → SESSION_CAPPED_REPLY + capped:true (widget ends the call). Verified: 2nd turn in same session capped, new session unaffected.
 - Usage dashboard: GET /admin/assistant/usage now returns `session_limit` + a 7-day `history` [{date,count}] from the assistant_usage per-day docs. Admin SettingsPane renders a dependency-free CSS bar chart (UsageChart) with weekday labels + counts, today's bar highlighted, plus "Today: N / limit".
 - Admin field `settings-assistant-session-limit` added. All verified via API (cap trip + reset) and screenshot (chart + field render). Daily cap, voice, greeting, OpenAI key all still present.
+
+## Smart lead alerts (WhatsApp) (2026-09)
+- New settings: `lead_alert_enabled` (default True), `lead_alert_whatsapp` (owner number; falls back to social_whatsapp).
+- /assistant/lead now fires a best-effort, non-blocking WhatsApp alert to the owner on every captured lead (name/email/phone/interest/goal) via whatsapp_service.send_whatsapp (asyncio.create_task). No-op + logged when Twilio/WhatsApp not configured (verified). Added `import asyncio` to assistant.py.
+- Admin UI (Assistant card): "WhatsApp me on new leads" toggle + "Alert number" field (settings-lead-alert). Verified render + lead capture path.
+
+## Instagram feed — ALREADY EXISTS (clarification 2026-09)
+- Backend routers/marketing.py: instagram_sync() (Graph API v21, uses instagram_access_token + instagram_user_id), /admin/instagram/sync (manual), auto-sync tick (~30min), /marketing/reels (public; curated DEFAULT_REELS fallback). Homepage "Fresh from the mat" section renders these.
+- Admin UI (SettingsPane Instagram card, settings-instagram-card): enable toggle, profile URL, auto-sync toggle, Instagram account id, long-lived access token (masked), Sync now, last-sync/error, manual reel list editor (paste reel links). FULLY functional — verified render.
+- IMPORTANT: Instagram's official API does NOT allow username/password; it needs a Business/Creator account ID + long-lived access token from Meta. Easy no-token alternative already available: paste latest reel/post links in "Reels shown" → they embed live.
+
+## Instagram live feed populated (2026-09)
+- User provided 2 real reel links (no Meta token — Option A). Saved to instagram_reels: DOjo6gtgAJZ, DZ2xI-Pgcpb. Verified /marketing/reels returns them and homepage "Fresh from the mat" renders both as live Instagram embeds (iframe .../reel/<code>/embed/). Profile URL already tonyoga_school. User can add more via Admin → Settings → Instagram → Add reel. Auto-sync (Option B) remains available if they later get a numeric Account ID + long-lived token.

@@ -6,6 +6,7 @@ Captures leads and hands hot leads off to WhatsApp via a wa.me deep link.
 import os
 import base64
 import tempfile
+import asyncio
 from typing import Optional, List
 from urllib.parse import quote
 from dotenv import load_dotenv
@@ -402,6 +403,22 @@ async def assistant_lead(payload: LeadIn, user: Optional[dict] = Depends(get_opt
             await send_enquiry_ack(payload.email, payload.name, payload.interest)
         except Exception as e:
             logger.warning(f"enquiry ack email failed for {payload.email}: {e}")
+
+    # Ping the owner on WhatsApp the moment a hot lead lands (best-effort, non-blocking).
+    try:
+        if (await get_setting("lead_alert_enabled")) is not False:
+            alert_to = (await get_setting("lead_alert_whatsapp")) or (await get_setting("social_whatsapp")) or ""
+            if alert_to:
+                from whatsapp_service import send_whatsapp
+                lines = ["🌿 New lead — Tony's Assistant", f"Name: {payload.name or '—'}"]
+                if payload.email: lines.append(f"Email: {payload.email}")
+                if payload.phone: lines.append(f"Phone: {payload.phone}")
+                if payload.interest: lines.append(f"Interest: {payload.interest}")
+                if payload.goal: lines.append(f"Goal: {payload.goal}")
+                lines.append("Follow up soon 🙏")
+                asyncio.create_task(send_whatsapp(alert_to, "\n".join(lines)))
+    except Exception as e:
+        logger.warning(f"lead whatsapp alert failed: {e}")
 
     wa_number = (await get_setting("social_whatsapp")) or ""
     digits = "".join(ch for ch in wa_number if ch.isdigit())
