@@ -143,6 +143,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "assistant_openai_model": "gpt-4o-mini",
     "assistant_voice": "nova",            # OpenAI TTS voice: alloy|echo|fable|onyx|nova|shimmer
     "assistant_daily_limit": 300,         # max AI turns/day (0 = unlimited) — guards against runaway OpenAI spend
+    "assistant_session_limit": 25,        # max AI turns per visitor session (0 = unlimited)
 }
 
 # Fields safe to expose to unauthenticated clients (frontend bootstrapping).

@@ -36,6 +36,8 @@ def _openai_client(key: str):
 
 CAPPED_REPLY = ("I've helped a lot of people today and need a short rest. "
                 "Please try again tomorrow, or reach Tony's team on WhatsApp. 🙏")
+SESSION_CAPPED_REPLY = ("We've covered a lot in this conversation! For anything more, reach Tony's team "
+                        "on WhatsApp — or refresh the page to start a fresh chat. 🙏")
 
 
 async def _usage_today() -> tuple:
@@ -54,6 +56,20 @@ async def _usage_ok() -> bool:
         return True
     _, count = await _usage_today()
     return count < limit
+
+
+async def _session_ok(sid: Optional[str]) -> bool:
+    """Per-visitor guardrail: cap AI turns within a single chat session."""
+    if not sid:
+        return True
+    try:
+        limit = int(await get_setting("assistant_session_limit") or 0)
+    except Exception:
+        limit = 0
+    if limit <= 0:
+        return True
+    doc = await db.chatbot_sessions.find_one({"id": sid}, {"turns": 1}) or {}
+    return int(doc.get("turns", 0)) < limit
 
 
 async def _bump_usage():
@@ -168,14 +184,20 @@ async def assistant_config():
 
 @api.get("/admin/assistant/usage")
 async def admin_assistant_usage(request: Request):
-    """Today's AI-turn count vs the configured daily cap (for the admin guardrail UI)."""
+    """Today's AI-turn count, the caps, and a 7-day history (for the admin guardrail UI)."""
     await require_role(request, ["admin"])
     today, count = await _usage_today()
-    try:
-        limit = int(await get_setting("assistant_daily_limit") or 0)
-    except Exception:
-        limit = 0
-    return {"date": today, "count": count, "limit": limit}
+    def _int(v):
+        try: return int(v or 0)
+        except Exception: return 0
+    limit = _int(await get_setting("assistant_daily_limit"))
+    session_limit = _int(await get_setting("assistant_session_limit"))
+    from datetime import timedelta
+    days = [(now_utc().date() - timedelta(days=i)).isoformat() for i in range(6, -1, -1)]
+    docs = await db.assistant_usage.find({"_id": {"$in": days}}).to_list(7)
+    cmap = {d["_id"]: int(d.get("count", 0)) for d in docs}
+    history = [{"date": d, "count": cmap.get(d, 0)} for d in days]
+    return {"date": today, "count": count, "limit": limit, "session_limit": session_limit, "history": history}
 
 
 @api.post("/assistant/chat")
@@ -188,6 +210,8 @@ async def assistant_chat(payload: ChatIn, user: Optional[dict] = Depends(get_opt
     if not await _usage_ok():
         sid = payload.session_id or gen_id()
         return {"session_id": sid, "reply": CAPPED_REPLY, "capped": True}
+    if not await _session_ok(payload.session_id):
+        return {"session_id": payload.session_id, "reply": SESSION_CAPPED_REPLY, "capped": True}
     sid, reply_text = await _generate_reply(payload.session_id, msg, user)
     return {"session_id": sid, "reply": reply_text}
 
@@ -237,6 +261,7 @@ async def _generate_reply(session_id: Optional[str], msg: str, user: Optional[di
     await db.chatbot_sessions.update_one(
         {"id": sid},
         {"$set": {"messages": new_msgs[-40:], "updated_at": now, "user_id": (user or {}).get("id")},
+         "$inc": {"turns": 1},
          "$setOnInsert": {"id": sid, "created_at": now}},
         upsert=True,
     )
@@ -300,6 +325,9 @@ async def assistant_voice(
     if not await _usage_ok():
         # Daily cap reached — skip all paid calls (STT/LLM/TTS) and reply gracefully.
         return {"session_id": session_id or gen_id(), "transcript": "", "reply": CAPPED_REPLY,
+                "audio_base64": "", "mime": "audio/mpeg", "capped": True}
+    if not await _session_ok(session_id):
+        return {"session_id": session_id or gen_id(), "transcript": "", "reply": SESSION_CAPPED_REPLY,
                 "audio_base64": "", "mime": "audio/mpeg", "capped": True}
     raw = await audio.read()
     if not raw:

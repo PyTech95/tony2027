@@ -55,6 +55,7 @@ function SettingsPane() {
         assistant_popup_delay: data.assistant_popup_delay ?? 8,
         assistant_voice: data.assistant_voice || "nova",
         assistant_daily_limit: data.assistant_daily_limit ?? 300,
+        assistant_session_limit: data.assistant_session_limit ?? 25,
         openai_api_key: "",
         openai_api_key_set: !!data.openai_api_key_set,
         openai_api_key_from_env: !!data.openai_api_key_from_env,
@@ -458,6 +459,29 @@ function SettingsPane() {
     </div>
   );
 }
+function UsageChart({ history }) {
+  const max = Math.max(1, ...history.map((d) => d.count));
+  const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const dow = (iso) => DOW[new Date(iso + "T00:00:00").getDay()];
+  return (
+    <div className="flex items-end gap-1.5" data-testid="settings-usage-chart">
+      {history.map((d, i) => (
+        <div key={i} className="flex-1 flex flex-col items-center gap-1">
+          <span className="text-[9px] font-semibold text-[#1C221F]">{d.count}</span>
+          <div className="w-full flex items-end justify-center" style={{ height: 56 }}>
+            <div
+              className="w-full max-w-[26px] rounded-t bg-[#B25A45] transition-all"
+              style={{ height: `${Math.round((d.count / max) * 100)}%`, minHeight: d.count > 0 ? 4 : 2, opacity: i === history.length - 1 ? 1 : 0.5 }}
+              title={`${d.count} turns on ${d.date}`}
+            />
+          </div>
+          <span className="text-[9px] text-[#6B7269]">{dow(d.date)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function AssistantCard({ form, set, inputCls, card }) {
   const [leads, setLeads] = useState(null);
   const [showLeads, setShowLeads] = useState(false);
@@ -487,11 +511,20 @@ function AssistantCard({ form, set, inputCls, card }) {
         <Field label="Daily cap (AI turns)" hint="Guards against surprise bills. 0 = unlimited.">
           <input data-testid="settings-assistant-limit" type="number" min="0" className={inputCls} value={form.assistant_daily_limit} onChange={(e) => set("assistant_daily_limit", e.target.value)} />
         </Field>
+        <Field label="Per-visitor cap (turns/chat)" hint="Stops one person using the whole budget. 0 = unlimited.">
+          <input data-testid="settings-assistant-session-limit" type="number" min="0" className={inputCls} value={form.assistant_session_limit} onChange={(e) => set("assistant_session_limit", e.target.value)} />
+        </Field>
       </div>
       {usage && (
-        <div className="text-[11px] text-[#6B7269] -mt-1" data-testid="settings-assistant-usage">
-          Today: <span className="font-semibold text-[#1C221F]">{usage.count}</span>{usage.limit > 0 ? <> / {usage.limit} turns used</> : <> turns used (unlimited)</>}
-          {usage.limit > 0 && usage.count >= usage.limit && <span className="ml-1.5 text-[#B25A45] font-semibold">· cap reached</span>}
+        <div className="rounded-xl bg-[#F7F2EC] border border-[#E7D9CB] p-3" data-testid="settings-assistant-usage">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] uppercase tracking-widest font-bold text-[#B25A45]">Assistant usage · last 7 days</span>
+            <span className="text-[11px] text-[#6B7269]">
+              Today: <span className="font-semibold text-[#1C221F]">{usage.count}</span>{usage.limit > 0 ? ` / ${usage.limit}` : " (unlimited)"}
+              {usage.limit > 0 && usage.count >= usage.limit && <span className="ml-1.5 text-[#B25A45] font-semibold">· cap reached</span>}
+            </span>
+          </div>
+          <UsageChart history={usage.history || []} />
         </div>
       )}
 

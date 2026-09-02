@@ -422,3 +422,8 @@ User choices: Printful auto-confirm BUT only on LIVE payments (skip in sandbox);
   - `assistant_openai_model` (default gpt-4o-mini).
 - Widget sendVoice fixed: now PLAYS the audio the server already returned (data.audio_base64) instead of re-calling TTS (saves cost/latency); honors `capped` (ends the call gracefully).
 - Verified: cap trips at limit then resets; TTS returns audio via voice setting; usage endpoint; admin card renders all controls (voice select, daily cap, live usage, greeting, OpenAI key). Full health recheck PASS (services up, all core endpoints 200, admin+student login OK, assistant chat+tts OK, scheduling class-instances 200 empty). Ready for user to add courses + host.
+
+## Assistant: per-visitor session cap + 7-day usage chart (2026-09)
+- Session cap: setting `assistant_session_limit` (default 25, 0=unlimited). Enforced at start of /assistant/chat + /assistant/voice via `_session_ok(sid)` (reads `turns` on the chatbot_sessions doc, incremented once per real AI turn in _generate_reply). When exceeded → SESSION_CAPPED_REPLY + capped:true (widget ends the call). Verified: 2nd turn in same session capped, new session unaffected.
+- Usage dashboard: GET /admin/assistant/usage now returns `session_limit` + a 7-day `history` [{date,count}] from the assistant_usage per-day docs. Admin SettingsPane renders a dependency-free CSS bar chart (UsageChart) with weekday labels + counts, today's bar highlighted, plus "Today: N / limit".
+- Admin field `settings-assistant-session-limit` added. All verified via API (cap trip + reset) and screenshot (chart + field render). Daily cap, voice, greeting, OpenAI key all still present.
