@@ -53,6 +53,8 @@ function SettingsPane() {
         assistant_enabled: data.assistant_enabled !== false,
         assistant_greeting: data.assistant_greeting || "",
         assistant_popup_delay: data.assistant_popup_delay ?? 8,
+        assistant_voice: data.assistant_voice || "nova",
+        assistant_daily_limit: data.assistant_daily_limit ?? 300,
         openai_api_key: "",
         openai_api_key_set: !!data.openai_api_key_set,
         openai_api_key_from_env: !!data.openai_api_key_from_env,
@@ -459,7 +461,10 @@ function SettingsPane() {
 function AssistantCard({ form, set, inputCls, card }) {
   const [leads, setLeads] = useState(null);
   const [showLeads, setShowLeads] = useState(false);
+  const [usage, setUsage] = useState(null);
   useEffect(() => { api.get("/admin/assistant/leads").then(({ data }) => setLeads(data.leads)).catch(() => setLeads([])); }, []);
+  useEffect(() => { api.get("/admin/assistant/usage").then(({ data }) => setUsage(data)).catch(() => setUsage(null)); }, []);
+  const VOICES = ["nova", "shimmer", "alloy", "echo", "fable", "onyx"];
   return (
     <div className={card} data-testid="settings-assistant-card">
       <div className="flex items-center justify-between">
@@ -472,6 +477,23 @@ function AssistantCard({ form, set, inputCls, card }) {
         <Field label="Popup delay (seconds)"><input data-testid="settings-assistant-delay" type="number" min="0" className={inputCls} value={form.assistant_popup_delay} onChange={(e) => set("assistant_popup_delay", e.target.value)} /></Field>
         <Field label="WhatsApp number" hint="For the 'Chat with Tony' handoff (with country code)."><input data-testid="settings-assistant-whatsapp" className={inputCls} value={form.social_whatsapp} onChange={(e) => set("social_whatsapp", e.target.value)} placeholder="+34 600 000 000" /></Field>
       </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Voice" hint="The spoken voice (OpenAI text-to-speech).">
+          <select data-testid="settings-assistant-voice" className={inputCls} value={form.assistant_voice} onChange={(e) => set("assistant_voice", e.target.value)}>
+            {VOICES.map((v) => <option key={v} value={v}>{v.charAt(0).toUpperCase() + v.slice(1)}</option>)}
+          </select>
+        </Field>
+        <Field label="Daily cap (AI turns)" hint="Guards against surprise bills. 0 = unlimited.">
+          <input data-testid="settings-assistant-limit" type="number" min="0" className={inputCls} value={form.assistant_daily_limit} onChange={(e) => set("assistant_daily_limit", e.target.value)} />
+        </Field>
+      </div>
+      {usage && (
+        <div className="text-[11px] text-[#6B7269] -mt-1" data-testid="settings-assistant-usage">
+          Today: <span className="font-semibold text-[#1C221F]">{usage.count}</span>{usage.limit > 0 ? <> / {usage.limit} turns used</> : <> turns used (unlimited)</>}
+          {usage.limit > 0 && usage.count >= usage.limit && <span className="ml-1.5 text-[#B25A45] font-semibold">· cap reached</span>}
+        </div>
+      )}
 
       <div className="rounded-xl bg-[#F7F2EC] border border-[#E7D9CB] p-3 space-y-2">
         <div className="flex items-center justify-between">

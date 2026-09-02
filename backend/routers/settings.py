@@ -141,6 +141,8 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     # When empty, the app falls back to the Emergent universal key (works only on Emergent hosting).
     "openai_api_key": "",
     "assistant_openai_model": "gpt-4o-mini",
+    "assistant_voice": "nova",            # OpenAI TTS voice: alloy|echo|fable|onyx|nova|shimmer
+    "assistant_daily_limit": 300,         # max AI turns/day (0 = unlimited) — guards against runaway OpenAI spend
 }
 
 # Fields safe to expose to unauthenticated clients (frontend bootstrapping).

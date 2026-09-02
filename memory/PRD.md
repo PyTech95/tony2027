@@ -412,3 +412,13 @@ User choices: Printful auto-confirm BUT only on LIVE payments (skip in sandbox);
 - Admin UI (SettingsPane → AI Assistant card): new masked "OpenAI API key" field with status badge ("Configured"/"Using Emergent key"), self-host guidance, and a "Get an OpenAI key" link. Uses existing secret masking (send masked/empty = keep; "__clear__" = wipe). Change is audit-logged (values never recorded).
 - Verified: settings expose masked key + _set flag; save→mask→idempotent-on-other-edits→__clear__ all work; chat falls back to Emergent when no key; admin field renders. NOTE: OpenAI-direct path can't be fully e2e'd on preview without a real key (would break the live Emergent path), but mechanics + fallback verified and code follows the integration playbook exactly.
 - VPS reminder for user: serve over HTTPS (microphone/getUserMedia requires a secure context) + set REACT_APP_BACKEND_URL to the deployed API origin.
+
+## Assistant admin controls: voice, greeting, daily spend cap (2026-09)
+- All assistant settings now live in Admin → Settings → AI Assistant card:
+  - **OpenAI API key** (masked; self-host) — done previously.
+  - **Greeting** (this is the SPOKEN opener the widget says) — existing field.
+  - **Voice** picker (assistant_voice; nova/shimmer/alloy/echo/fable/onyx) → used by `_tts_base64` (reads setting when caller passes no voice). TTSIn.voice default None.
+  - **Daily cap** (assistant_daily_limit, default 300, 0=unlimited) — guardrail against runaway OpenAI spend. Enforced at the START of /assistant/chat and /assistant/voice via `_usage_ok()`; when over, returns CAPPED_REPLY with `capped:true` and skips ALL paid calls (STT/LLM/TTS). `_bump_usage()` increments a per-day `assistant_usage` doc after each real AI turn. Live counter shown in admin via GET /admin/assistant/usage ("Today: N / limit turns used").
+  - `assistant_openai_model` (default gpt-4o-mini).
+- Widget sendVoice fixed: now PLAYS the audio the server already returned (data.audio_base64) instead of re-calling TTS (saves cost/latency); honors `capped` (ends the call gracefully).
+- Verified: cap trips at limit then resets; TTS returns audio via voice setting; usage endpoint; admin card renders all controls (voice select, daily cap, live usage, greeting, OpenAI key). Full health recheck PASS (services up, all core endpoints 200, admin+student login OK, assistant chat+tts OK, scheduling class-instances 200 empty). Ready for user to add courses + host.

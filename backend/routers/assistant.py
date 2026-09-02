@@ -33,6 +33,35 @@ def _openai_client(key: str):
     from openai import AsyncOpenAI  # lazy import
     return AsyncOpenAI(api_key=key, timeout=60.0, max_retries=2)
 
+
+CAPPED_REPLY = ("I've helped a lot of people today and need a short rest. "
+                "Please try again tomorrow, or reach Tony's team on WhatsApp. 🙏")
+
+
+async def _usage_today() -> tuple:
+    """(today_iso, count) of assistant AI turns used today."""
+    today = now_utc().date().isoformat()
+    doc = await db.assistant_usage.find_one({"_id": today}) or {}
+    return today, int(doc.get("count", 0))
+
+
+async def _usage_ok() -> bool:
+    try:
+        limit = int(await get_setting("assistant_daily_limit") or 0)
+    except Exception:
+        limit = 0
+    if limit <= 0:
+        return True
+    _, count = await _usage_today()
+    return count < limit
+
+
+async def _bump_usage():
+    today = now_utc().date().isoformat()
+    await db.assistant_usage.update_one(
+        {"_id": today}, {"$inc": {"count": 1}, "$set": {"date": today}}, upsert=True,
+    )
+
 PERSONA = (
     "You are Tony's Assistant — the warm, knowledgeable voice guide for Tony Sanchez Yoga, "
     "led by Tony Sanchez, a master teacher with ~50 years on the mat (Ghosh/Bikram lineage), based in Málaga, Spain. "
@@ -137,6 +166,18 @@ async def assistant_config():
     }
 
 
+@api.get("/admin/assistant/usage")
+async def admin_assistant_usage(request: Request):
+    """Today's AI-turn count vs the configured daily cap (for the admin guardrail UI)."""
+    await require_role(request, ["admin"])
+    today, count = await _usage_today()
+    try:
+        limit = int(await get_setting("assistant_daily_limit") or 0)
+    except Exception:
+        limit = 0
+    return {"date": today, "count": count, "limit": limit}
+
+
 @api.post("/assistant/chat")
 async def assistant_chat(payload: ChatIn, user: Optional[dict] = Depends(get_optional_user)):
     if (await get_setting("assistant_enabled")) is False:
@@ -144,6 +185,9 @@ async def assistant_chat(payload: ChatIn, user: Optional[dict] = Depends(get_opt
     msg = (payload.message or "").strip()
     if not msg:
         raise HTTPException(400, "Empty message.")
+    if not await _usage_ok():
+        sid = payload.session_id or gen_id()
+        return {"session_id": sid, "reply": CAPPED_REPLY, "capped": True}
     sid, reply_text = await _generate_reply(payload.session_id, msg, user)
     return {"session_id": sid, "reply": reply_text}
 
@@ -182,6 +226,9 @@ async def _generate_reply(session_id: Optional[str], msg: str, user: Optional[di
         except Exception as e:
             logger.warning(f"assistant chat failed: {e}")
 
+    if okey or EMERGENT_LLM_KEY:
+        await _bump_usage()
+
     now = now_utc().isoformat()
     new_msgs = history + [
         {"role": "visitor", "text": msg, "at": now},
@@ -196,10 +243,12 @@ async def _generate_reply(session_id: Optional[str], msg: str, user: Optional[di
     return sid, reply_text
 
 
-async def _tts_base64(text: str, voice: str = "nova") -> str:
+async def _tts_base64(text: str, voice: Optional[str] = None) -> str:
     """Synthesize spoken audio (mp3) as base64. Prefers the admin OpenAI key, else Emergent. '' on failure."""
     if not text.strip():
         return ""
+    if not voice:
+        voice = (await get_setting("assistant_voice")) or "nova"
     okey = await _openai_key()
     if okey:
         try:
@@ -223,14 +272,14 @@ async def _tts_base64(text: str, voice: str = "nova") -> str:
 
 class TTSIn(BaseModel):
     text: str
-    voice: Optional[str] = "nova"
+    voice: Optional[str] = None
 
 
 @api.post("/assistant/tts")
 async def assistant_tts(payload: TTSIn):
     if (await get_setting("assistant_enabled")) is False:
         raise HTTPException(403, "Assistant is disabled.")
-    audio = await _tts_base64(payload.text or "", payload.voice or "nova")
+    audio = await _tts_base64(payload.text or "", payload.voice)
     return {"audio_base64": audio, "mime": "audio/mpeg"}
 
 
@@ -248,6 +297,10 @@ async def assistant_voice(
     okey = await _openai_key()
     if not okey and not EMERGENT_LLM_KEY:
         raise HTTPException(503, "Voice is not available right now.")
+    if not await _usage_ok():
+        # Daily cap reached — skip all paid calls (STT/LLM/TTS) and reply gracefully.
+        return {"session_id": session_id or gen_id(), "transcript": "", "reply": CAPPED_REPLY,
+                "audio_base64": "", "mime": "audio/mpeg", "capped": True}
     raw = await audio.read()
     if not raw:
         raise HTTPException(400, "Empty audio.")

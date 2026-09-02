@@ -156,11 +156,18 @@ export default function AssistantWidget() {
       fd.append("speak", "true");
       const { data } = await api.post("/assistant/voice", fd, { headers: { "Content-Type": "multipart/form-data" } });
       setSessionId(data.session_id); sessionRef.current = data.session_id;
+      if (data.capped) {
+        setMsgs((m) => [...m, { role: "assistant", text: data.reply }]);
+        return { stop: true };
+      }
       setMsgs((m) => [...m, { role: "visitor", text: data.transcript }, { role: "assistant", text: data.reply }]);
       turnsRef.current += 1;
       if (turnsRef.current >= 2) setShowLead(true);
       const stop = isStopIntent(data.transcript);
-      await speakText(data.reply || (stop ? "Take care, and see you on the mat." : ""));
+      // Play the audio the server already synthesized; fall back to a TTS call only if none.
+      setMode("speaking");
+      if (data.audio_base64) await playB64(data.audio_base64);
+      else if (data.reply) await speakText(data.reply);
       return { stop };
     } catch {
       return { stop: false, error: true };
