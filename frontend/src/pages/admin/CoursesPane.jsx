@@ -292,7 +292,7 @@ function CoursesPane() {
   const [saving, setSaving] = useState(false);
 
   const load = async () => {
-    try { const { data } = await api.get("/programs"); setList(data); } catch { setList([]); }
+    try { const { data } = await api.get("/admin/programs"); setList(data); } catch { setList([]); }
   };
   useEffect(() => {
     load();
@@ -307,6 +307,7 @@ function CoursesPane() {
       price: p.price ?? 0, currency: p.currency || "eur", price_model: p.price_model || "one_time",
       cover_image: p.cover_image || "", benefits: (p.benefits || []).join("\n"),
       demo_video_url: p.demo_video_url || "",
+      main_video_url: p.main_video_url || "",
       focus_areas: p.focus_areas || [],
       intensity: p.intensity || "moderate",
       language: p.language || "both",
@@ -316,7 +317,7 @@ function CoursesPane() {
   };
   const openNew = () => {
     setEditing({ __new: true });
-    setForm({ title: "", description: "", level: "beginner", style: "Hatha", duration_weeks: 4, price: 0, currency: "eur", price_model: "one_time", cover_image: "", benefits: "", demo_video_url: "", focus_areas: [], intensity: "moderate", language: "both", related_product_ids: [], drip_enabled: false, drip_interval_days: 7 });
+    setForm({ title: "", description: "", level: "beginner", style: "Hatha", duration_weeks: 4, price: 0, currency: "eur", price_model: "one_time", cover_image: "", benefits: "", demo_video_url: "", main_video_url: "", focus_areas: [], intensity: "moderate", language: "both", related_product_ids: [], drip_enabled: false, drip_interval_days: 7 });
   };
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -334,6 +335,7 @@ function CoursesPane() {
       currency: form.currency, price_model: form.price_model, cover_image: form.cover_image || null,
       benefits: form.benefits.split("\n").map((b) => b.trim()).filter(Boolean),
       demo_video_url: form.demo_video_url || "",
+      main_video_url: form.main_video_url || "",
       focus_areas: form.focus_areas || [],
       intensity: form.intensity || null,
       language: form.language || null,
@@ -390,6 +392,11 @@ function CoursesPane() {
           <Field label="Demo / intro video (YouTube)" hint="Plays at the top of the course page for everyone — enrolled or not. Leave blank to auto-use the first lesson clip.">
             <input data-testid="course-demo-video" className={inputCls2} value={form.demo_video_url} onChange={(e) => set("demo_video_url", e.target.value)} placeholder="https://www.youtube.com/watch?v=…" />
             {form.demo_video_url && !parseYouTubeId(form.demo_video_url) && <div className="text-xs text-[#B25A45] mt-1">Not a recognized YouTube link.</div>}
+          </Field>
+
+          <Field label="Full course video (YouTube)" hint="The complete guided course. Shows right below the demo — LOCKED for logged-in visitors without access and HIDDEN entirely for logged-out visitors. Only subscribed / enrolled students (and staff) can play it.">
+            <input data-testid="course-main-video" className={inputCls2} value={form.main_video_url} onChange={(e) => set("main_video_url", e.target.value)} placeholder="https://www.youtube.com/watch?v=…" />
+            {form.main_video_url && !parseYouTubeId(form.main_video_url) && <div className="text-xs text-[#B25A45] mt-1">Not a recognized YouTube link.</div>}
           </Field>
 
           <Field label="Focus areas" hint="Used by the Discover filters. Tap to toggle.">

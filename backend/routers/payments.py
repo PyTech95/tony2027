@@ -21,22 +21,29 @@ def _to_minor_units(amount: float, currency: str) -> int:
 
 async def _create_onetime_session(*, amount, currency, success_url, cancel_url, metadata, customer_email, product_name):
     """One-time Checkout session via the official Stripe SDK."""
-    stripe.api_key = await _stripe_api_key()
-    return stripe.checkout.Session.create(
-        mode="payment",
-        success_url=success_url,
-        cancel_url=cancel_url,
-        metadata=metadata,
-        customer_email=customer_email,
-        line_items=[{
-            "price_data": {
-                "currency": (currency or "usd").lower(),
-                "unit_amount": _to_minor_units(amount, currency),
-                "product_data": {"name": product_name or "Tony Yoga"},
-            },
-            "quantity": 1,
-        }],
-    )
+    await _require_stripe_key()
+    try:
+        return stripe.checkout.Session.create(
+            mode="payment",
+            success_url=success_url,
+            cancel_url=cancel_url,
+            metadata=metadata,
+            customer_email=customer_email,
+            line_items=[{
+                "price_data": {
+                    "currency": (currency or "usd").lower(),
+                    "unit_amount": _to_minor_units(amount, currency),
+                    "product_data": {"name": product_name or "Tony Yoga"},
+                },
+                "quantity": 1,
+            }],
+        )
+    except stripe.error.AuthenticationError as e:
+        logger.warning(f"Stripe auth error (bad key): {e}")
+        raise HTTPException(503, "Payments are not configured correctly. Please contact support.")
+    except stripe.error.StripeError as e:
+        logger.warning(f"Stripe checkout session failed: {e}")
+        raise HTTPException(503, "Unable to start checkout right now. Please try again shortly.")
 
 
 # Map our billing_cycle field to Stripe recurring interval params.
@@ -54,13 +61,33 @@ async def _stripe_api_key() -> str:
     return key or os.environ.get("STRIPE_API_KEY", "")
 
 
+def _is_valid_stripe_key(key: str) -> bool:
+    """A real Stripe secret/restricted key is sk_/rk_ (test or live) + a long token.
+    The `sk_test_emergent` placeholder and blanks are rejected so checkout can fail
+    gracefully with a 503 instead of a raw 500 from the Stripe SDK."""
+    if not key or not isinstance(key, str):
+        return False
+    if not (key.startswith("sk_") or key.startswith("rk_")):
+        return False
+    return len(key) >= 20 and "emergent" not in key.lower()
+
+
+async def _require_stripe_key() -> str:
+    key = await _stripe_api_key()
+    if not _is_valid_stripe_key(key):
+        logger.warning("Stripe key missing/invalid — add a valid key in Admin → Settings.")
+        raise HTTPException(503, "Card payments are temporarily unavailable. Please try again later.")
+    stripe.api_key = key
+    return key
+
+
 async def _create_subscription_session(*, user: dict, plan: dict, origin_url: str) -> dict:
     """Create a Stripe Checkout session in subscription mode with optional trial_period_days.
 
     Uses the official Stripe SDK in subscription mode.
     Returns {url, session_id, amount, currency, metadata}.
     """
-    stripe.api_key = await _stripe_api_key()
+    await _require_stripe_key()
     cycle = plan.get("billing_cycle", "monthly")
     recurring = _BILLING_CYCLE_TO_STRIPE.get(cycle, _BILLING_CYCLE_TO_STRIPE["monthly"])
     currency = (plan.get("currency") or "usd").lower()
@@ -267,7 +294,7 @@ async def create_checkout(payload: CheckoutRequest, request: Request, user: dict
             session = await _create_subscription_session(user=user, plan=plan, origin_url=payload.origin_url)
         except stripe.error.StripeError as e:
             logger.exception(f"Stripe subscription creation failed: {e}")
-            raise HTTPException(500, f"Stripe error: {e.user_message or str(e)}")
+            raise HTTPException(503, "Unable to start the subscription right now. Please try again shortly.")
         await db.payment_transactions.insert_one({
             "id": gen_id(), "session_id": session["session_id"],
             "user_id": user["id"], "user_email": user["email"],

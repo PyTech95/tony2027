@@ -145,6 +145,17 @@ async def list_programs(level: Optional[str] = None, style: Optional[str] = None
     query: Dict[str, Any] = {}
     if level: query["level"] = level
     if style: query["style"] = style
+    # Never leak the gated full-course video URL on the public list.
+    return await db.programs.find(query, {"_id": 0, "main_video_url": 0}).to_list(500)
+
+
+@api.get("/admin/programs")
+async def admin_list_programs(request: Request, level: Optional[str] = None, style: Optional[str] = None):
+    """Admin-scoped course list — includes main_video_url so the editor can prefill it."""
+    await require_role(request, ["admin", "instructor"])
+    query: Dict[str, Any] = {}
+    if level: query["level"] = level
+    if style: query["style"] = style
     return await db.programs.find(query, {"_id": 0}).to_list(500)
 
 
@@ -367,6 +378,13 @@ async def get_program(program_id: str, user: Optional[dict] = Depends(get_option
         demo_id = first_v.get("youtube_id") or _demo_yt(first_v.get("source_url") or first_v.get("video_url"))
         demo_start = int(first_v.get("start_seconds") or 0)
     program["demo_video"] = {"youtube_id": demo_id, "start_seconds": demo_start} if demo_id else None
+    # Full course video — gated: only exposed (with the id) to viewers who have access.
+    _has_access = bool(is_staff or user_owns or user_member)
+    _main_id = _demo_yt(program.get("main_video_url"))
+    program["main_video"] = {"youtube_id": _main_id} if (_main_id and _has_access) else None
+    # Locked = a full course video exists, viewer is logged in but has no access yet.
+    program["main_video_locked"] = bool(_main_id and bool(user) and not _has_access)
+    program.pop("main_video_url", None)  # never leak the raw URL to non-subscribers
     # Related products (books, mats, etc.) curated for this course.
     rpids = program.get("related_product_ids") or []
     if rpids:

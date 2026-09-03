@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 53 — verified both changes end-to-end (backend pytest + Playwright UI). (1) Main Full Course Video gating works in all four viewer states: logged-OUT = section completely hidden and youtube id absent from DOM/API; logged-IN no-access (fresh @qatest.com user) = main-course-locked card + 'See plans' CTA which navigates to /memberships, main_video null / main_video_locked true, id not exposed; entitled student = main-course-video renders, main-course-play click mounts main-course-iframe with src youtube.com/embed/dQw4w9WgXcQ; admin (staff) = playable. Admin editor round-trip verified in the real UI: /admin?tab=courses -> course-row-{id} -> 'Full course video (YouTube)' (course-main-video) prefilled, edited to https://youtu.be/9bZkp7q19f0, saved (PATCH /api/admin/programs/{id} 200, 'Course updated.' toast), value persisted after reload, then cleared to '' successfully (DB left clean). (2) Stripe misconfig now fails gracefully: POST /api/checkout/session returns 503 with detail 'Payments are not configured yet. Please add a valid Stripe API key in Admin -> Settings.' for program and drop_in item types (no 500, no traceback), and the UI surfaces that exact message as a sonner toast on /passes. Verified partial store credit is NOT stranded: fresh user + $10 gift card buying the 199 program with apply_credit=true -> 503 and credit fully returned. Backend pytest 8/9 pass. The single failure is a REAL new finding: GET /api/programs (public, unauthenticated) returns the raw main_video_url including the YouTube id, defeating the gating done in GET /api/programs/{id}.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/programs (list)", "issue": "GATING BYPASS / leak: list_programs (content.py:148) returns full program docs with only {_id:0} projection, so the raw main_video_url (e.g. https://www.youtube.com/watch?v=dQw4w9WgXcQ) is returned to ANONYMOUS callers. Confirmed live while the field was set. Anyone can read the id from /api/programs and watch the paid full-course video on YouTube, which nullifies the main_video/main_video_locked gating in GET /api/programs/{id}. NOTE: the admin CoursesPane loads its list from GET /programs and prefills course-main-video from it, so the fix must add an admin-scoped source (e.g. GET /api/admin/programs or GET /api/programs/{id}?admin) before/while stripping main_video_url (and ideally demo-only fields) from the public list.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/checkout/session", "issue": "The 503 detail shown to END CUSTOMERS leaks admin-facing instructions ('Please add a valid Stripe API key in Admin -> Settings'). Return a customer-safe message (e.g. 'Card payments are temporarily unavailable') and log the admin hint server-side."},
+      {"endpoint": "routers/payments.py::_create_onetime_session", "issue": "Handlers use the deprecated stripe.error.* namespace (stripe SDK 14.4.1 still aliases it, works today but will break on removal — prefer stripe.AuthenticationError / stripe.StripeError). Also _create_subscription_session's Session.create is NOT wrapped locally; it relies on the caller's except stripe.error.StripeError, which does not catch non-Stripe exceptions."},
+      {"endpoint": "GET /api/checkout/status/{session_id}", "issue": "Sets stripe.api_key = await _stripe_api_key() without the _is_valid_stripe_key guard, so a placeholder key yields a generic 404 'Session not found at Stripe' instead of the 503 'not configured' path (inconsistent with create_checkout)."},
+      {"endpoint": "CORS (server.py)", "issue": "Carried over from iteration 52 and still present: Access-Control-Allow-Origin '*' with no Access-Control-Allow-Credentials, while /api/auth/login sets an httpOnly access_token cookie (HttpOnly; Secure; SameSite=None; Partitioned). The cookie can never be sent cross-origin; app relies on the localStorage Bearer token."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Course page (/programs/{id}) locked full-course card", "issues": ["Cosmetic only: the locked card and the demo player are visually similar in height/rounding, so on first scroll the two stacked 16:9 blocks read as one component; the 'FULL COURSE VIDEO' eyebrow inside the dark card is small (10-11px) but contrast is acceptable (#E0A38F on #1C221F). No functional issue."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration53_mainvideo_stripe.py",
+    "/app/test_reports/pytest/iter53.xml"
+  ],
+  "action_items": [
+    "HIGH: strip main_video_url from the public GET /api/programs list (projection {main_video_url: 0} or a whitelist), and switch admin CoursesPane to an admin-scoped fetch so the course editor still prefills the field.",
+    "Make the 503 checkout message customer-safe (no 'Admin -> Settings' hint) and keep the admin detail in logs.",
+    "Optional consistency: apply _require_stripe_key() in GET /api/checkout/status and wrap _create_subscription_session's Session.create in the same try/except; migrate stripe.error.* -> stripe.* exception classes."
+  ],
+  "critical_code_review_comments": [
+    "content.py:148 list_programs — public endpoint returns the whole document; the gating logic in get_program (lines 370-376) is defeated by it. Gate fields at one layer only, or serialize programs through a Pydantic response model.",
+    "content.py:132 update_program — `if v is not None` correctly lets main_video_url='' clear the field (verified), but it also means a client can never null out other optional fields; fine for now, worth a comment.",
+    "payments.py — create_checkout's one-time branch now correctly releases reserved credit before re-raising the 503 (verified: no stranded credit). Keep that ordering when refactoring.",
+    "ProgramDetail.jsx MainCourseVideo — logic is correct (hidden when !yid && !locked). Consider a data-testid on the hidden state (or nothing) is fine; no change needed."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration53_mainvideo_stripe.py"],
+  "success_rate": {"backend": "89% (8/9 pytest; the 1 failure is the real /api/programs main_video_url leak)", "frontend": "100% (logged-out hidden, no-access locked + CTA, entitled playable + iframe, admin set/edit/clear round-trip, graceful Stripe toast)"},
+  "seed_data_creation": "Created throwaway users TEST_it53_*@qatest.com and TEST_it53ui_97824f@qatest.com (no access, no membership) and one $10 admin gift card redeemed by a throwaway user. Core 26+ main_video_url was set to dQw4w9WgXcQ for the gating tests and is now CLEARED back to '' (verified in DB). Side effect from an earlier version of the credit test: two €22 credit-only drop-in purchases for student@demo.com were auto-fulfilled; I reverted them (store_credit restored 601.02 -> 645.02, class pass remaining 27 -> 25, the 2 payment_transactions deleted), and the test was rewritten to use a fresh user + partial gift-card credit so it no longer touches the demo student.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "Admin tony@tonyyoga.com / TonyYoga2026! and student@demo.com / Student2026! both valid. password_hash format is $2b$12$ (bcrypt) for both; login sets HttpOnly Secure SameSite=None access_token cookie. Login page has data-testid login-demo-admin / login-demo-student quick-fill buttons.",
+  "context_for_next_testing_agent": "Full-course-video gating (backend + all 4 frontend viewer states) and the Stripe 503 graceful path are fully verified — no need to retest unless code changes. Re-run `pytest /app/backend/tests/test_iteration53_mainvideo_stripe.py -v -n 0` (MUST use -n 0: the module-scoped fixture that sets/clears main_video_url on Core 26+ races with itself under xdist and produces false failures). Only test_program_list_does_not_leak_main_video_url should fail until the public /api/programs projection is fixed; when fixing, also check the admin course editor still prefills course-main-video. Stripe key in this pod is still the placeholder sk_test_emergent, so every checkout returns 503 by design; store-credit-only checkout is the sole working purchase path.",
+  "rca_of_the_issue": "Leak RCA: the main_video gating was implemented only inside GET /api/programs/{id} (content.py 370-376, which pops main_video_url), but GET /api/programs returns db.programs documents with just an _id projection, so the raw main_video_url survives to unauthenticated clients. Repro: admin PATCH /api/admin/programs/{id} {main_video_url:'https://www.youtube.com/watch?v=dQw4w9WgXcQ'} then curl /api/programs (no auth) | grep main_video_url -> full URL returned. Mitigation: exclude main_video_url in the public list projection and give the admin console a role-gated program list endpoint (the editor currently depends on this leaked field for prefill)."
+}

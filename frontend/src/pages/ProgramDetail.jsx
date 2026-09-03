@@ -70,6 +70,7 @@ export default function ProgramDetail() {
 
       <div className="mx-auto max-w-2xl px-5 space-y-6">
         <DemoVideo demo={p.demo_video} hasAccess={hasAccess} />
+        <MainCourseVideo video={p.main_video} locked={p.main_video_locked} />
 
         <p className="text-[15px] text-[#545E56] leading-relaxed">{p.description}</p>
 
@@ -224,6 +225,64 @@ function DemoVideo({ demo, hasAccess }) {
     </div>
   );
 }
+
+function MainCourseVideo({ video, locked }) {
+  const [playing, setPlaying] = useState(false);
+  const yid = video?.youtube_id;
+  // Hidden entirely for logged-out / no-access-without-config users.
+  if (!yid && !locked) return null;
+
+  if (locked) {
+    return (
+      <div data-testid="main-course-locked" className="relative aspect-video rounded-3xl overflow-hidden bg-[#1C221F] text-white flex flex-col items-center justify-center gap-3 text-center px-6">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(178,90,69,0.35),transparent_60%)]" />
+        <div className="relative h-14 w-14 rounded-full bg-white/10 ring-1 ring-white/20 flex items-center justify-center">
+          <Lock className="h-6 w-6 text-[#E0A38F]" />
+        </div>
+        <div className="relative">
+          <div className="eyebrow !text-[#E0A38F]">Full course video</div>
+          <div className="serif text-xl mt-1">Unlock the complete course</div>
+          <p className="text-sm text-white/70 mt-1 max-w-sm">Subscribe or enrol to stream the full guided course from start to finish.</p>
+        </div>
+        <Link to="/memberships" data-testid="main-course-subscribe" className="relative pill pill-primary mt-1">See plans →</Link>
+      </div>
+    );
+  }
+
+  const embed = `https://www.youtube.com/embed/${yid}?autoplay=1&rel=0&modestbranding=1`;
+  const poster = `https://img.youtube.com/vi/${yid}/maxresdefault.jpg`;
+  return (
+    <div data-testid="main-course-video" className="space-y-2">
+      <div className="eyebrow !text-[#B25A45]">Full course video</div>
+      <div className="relative aspect-video rounded-3xl overflow-hidden bg-black shadow-xl ring-1 ring-[#B25A45]/20">
+        {playing ? (
+          <iframe
+            title="Full course video"
+            src={embed}
+            data-testid="main-course-iframe"
+            className="absolute inset-0 h-full w-full"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+          />
+        ) : (
+          <button onClick={() => setPlaying(true)} data-testid="main-course-play" className="group absolute inset-0 h-full w-full">
+            <img src={poster} alt="Full course" className="absolute inset-0 h-full w-full object-cover" onError={(e) => { e.currentTarget.src = `https://img.youtube.com/vi/${yid}/hqdefault.jpg`; }} />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="h-16 w-16 rounded-full bg-white/95 flex items-center justify-center group-hover:scale-110 transition shadow-xl">
+                <Play className="h-7 w-7 text-[#B25A45] ml-1" />
+              </div>
+            </div>
+            <div className="absolute bottom-3 left-4 text-white text-xs font-bold uppercase tracking-widest bg-[#B25A45]/80 rounded-full px-3 py-1">
+              Full course · unlocked
+            </div>
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 
 function BundleUpsell({ p }) {
   const navigate = useNavigate();

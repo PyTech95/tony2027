@@ -440,3 +440,10 @@ User choices: Printful auto-confirm BUT only on LIVE payments (skip in sandbox);
 
 ## Instagram live feed populated (2026-09)
 - User provided 2 real reel links (no Meta token — Option A). Saved to instagram_reels: DOjo6gtgAJZ, DZ2xI-Pgcpb. Verified /marketing/reels returns them and homepage "Fresh from the mat" renders both as live Instagram embeds (iframe .../reel/<code>/embed/). Profile URL already tonyoga_school. User can add more via Admin → Settings → Instagram → Add reel. Auto-sync (Option B) remains available if they later get a numeric Account ID + long-lived token.
+
+## Iteration 53 (2026-06) — Main Full Course Video + Stripe graceful failure
+- MAIN FULL COURSE VIDEO (finished): each course has a demo/intro video (public) AND a locked full-course video. Admin sets it in Console → Courses & Videos → course editor "Full course video (YouTube)" (data-testid course-main-video); backend content.py get_program gates it — exposes main_video.youtube_id ONLY to staff/owner/active-member, main_video_locked=true only for logged-in no-access users, HIDDEN for logged-out, and pops raw main_video_url. Frontend ProgramDetail.jsx MainCourseVideo renders hidden/locked-card/playable states.
+- LEAK FIX (from tester iter53 HIGH): public GET /api/programs now projects out main_video_url; new role-gated GET /api/admin/programs returns it so the admin course editor still prefills. CoursesPane load() switched to /admin/programs. 9/9 pytest pass.
+- STRIPE GRACEFUL FAILURE (P0): payments.py _is_valid_stripe_key/_require_stripe_key reject the sk_test_emergent placeholder → checkout returns HTTP 503 "Card payments are temporarily unavailable. Please try again later." (customer-safe; admin hint logged) instead of a raw 500. Verified no store-credit is stranded on the 503 path.
+- VERIFIED: testing_agent iteration_53 — frontend 100% (all 4 viewer states + admin round-trip + Stripe toast); backend pytest 9/9 after leak fix. Run leak pytest with `-n 0` (module fixture races under xdist).
+- STILL PENDING (user backlog): Reel captions under homepage Instagram reels (P1); Go-Live payments needs real LIVE Stripe/PayPal keys (self-serve Admin → Settings).

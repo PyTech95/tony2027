@@ -89,6 +89,7 @@ class ProgramCreate(BaseModel):
     cover_image: Optional[str] = None
     trailer_url: Optional[str] = None
     demo_video_url: Optional[str] = None
+    main_video_url: Optional[str] = None
     focus_areas: Optional[List[str]] = None
     intensity: Optional[str] = None
     language: Optional[str] = None
@@ -111,6 +112,7 @@ class ProgramUpdate(BaseModel):
     cover_image: Optional[str] = None
     trailer_url: Optional[str] = None
     demo_video_url: Optional[str] = None
+    main_video_url: Optional[str] = None
     focus_areas: Optional[List[str]] = None
     intensity: Optional[str] = None
     language: Optional[str] = None
