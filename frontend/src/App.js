@@ -37,6 +37,10 @@ import Passes from "@/pages/Passes";
 import Wishlist from "@/pages/Wishlist";
 import { CheckoutSuccess, CheckoutCancel } from "@/pages/Checkout";
 import Certificate from "@/pages/Certificate";
+import Privacy from "@/pages/legal/Privacy";
+import Terms from "@/pages/legal/Terms";
+import AccountDeletion from "@/pages/legal/AccountDeletion";
+import Support from "@/pages/legal/Support";
 import InstallPrompt from "@/components/InstallPrompt";
 import "@/App.css";
 
@@ -65,6 +69,10 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/certificate/:code" element={<Certificate />} />
+          <Route path="/privacy" element={<Privacy />} />
+          <Route path="/terms" element={<Terms />} />
+          <Route path="/account-deletion" element={<AccountDeletion />} />
+          <Route path="/support" element={<Support />} />
           <Route element={<AppShell />}>
             <Route path="/" element={<AppRoot />} />
             <Route path="/welcome" element={<Landed />} />

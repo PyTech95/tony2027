@@ -13,13 +13,14 @@ from seed import seed
 from fastapi import Request
 
 # Register all routers (side-effect imports)
-from routers import auth, scheduling, content, payments, referrals, admin, workshops, push, orders, submissions, settings, seed_tony, paypal, news, retreats, streaks, passes, wishlist, marketing, providers, bundles, assistant, zoom, broadcasts, leaderboard, giftcards, notifications, uploads, asanas, meditations, printful, quiz  # noqa: F401
+from routers import auth, scheduling, content, payments, referrals, admin, workshops, push, orders, submissions, settings, seed_tony, paypal, news, retreats, streaks, passes, wishlist, marketing, providers, bundles, assistant, zoom, broadcasts, leaderboard, giftcards, notifications, uploads, asanas, meditations, printful, quiz, account  # noqa: F401
 from routers.push import send_reminders_tick
 from routers.payments import release_stranded_credit_tick
 from routers.retreats import send_balance_reminders_tick, expire_seat_offers_tick
 from routers.marketing import instagram_sync_tick
 from routers.broadcasts import broadcasts_publish_tick
 from routers.zoom import zoom_recording_poll_tick
+from routers.account import purge_deleted_accounts_tick
 
 # Set on startup so /api/health can surface why programs=0 (bad MONGO_URL / seed exception).
 _seed_ran: bool = False
@@ -187,6 +188,10 @@ async def _reminder_loop():
             await release_stranded_credit_tick()
         except Exception as e:
             logger.warning(f"stranded credit release tick failed: {e}")
+        try:
+            await purge_deleted_accounts_tick()
+        except Exception as e:
+            logger.warning(f"account purge tick failed: {e}")
         await asyncio.sleep(60)
 
 

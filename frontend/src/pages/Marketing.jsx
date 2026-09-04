@@ -356,7 +356,11 @@ function Footer() {
       </div>
       <div className="mx-auto max-w-6xl px-4 sm:px-6 mt-8 sm:mt-12 pt-6 border-t border-white/10 flex flex-wrap items-center justify-between gap-4">
         <div className="text-xs text-white/40">© {new Date().getFullYear()} Tony Yoga. {t("mkt.rights")}</div>
-        <div className="flex items-center gap-5 text-xs">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
+          <Link to="/privacy" data-testid="footer-privacy" className="text-white/60 hover:text-white transition">Privacy</Link>
+          <Link to="/terms" data-testid="footer-terms" className="text-white/60 hover:text-white transition">Terms</Link>
+          <Link to="/account-deletion" data-testid="footer-account-deletion" className="text-white/60 hover:text-white transition">Delete account</Link>
+          <Link to="/support" data-testid="footer-support" className="text-white/60 hover:text-white transition">Support</Link>
           <Link to="/home" className="text-white/60 hover:text-white transition">{t("mkt.student_signin")}</Link>
           <Link to="/login?admin=1" data-testid="footer-admin-signin" className="text-white/60 hover:text-[#B25A45] transition">{t("mkt.admin_signin")}</Link>
         </div>

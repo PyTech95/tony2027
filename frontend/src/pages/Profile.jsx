@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { toast } from "sonner";
-import { LogOut, User as UserIcon, Sparkles, ShoppingBag, GraduationCap, Gift, Shield, Flame, MountainSnow, Ticket, Heart, Trophy, BookOpen, Download } from "lucide-react";
+import { LogOut, User as UserIcon, Sparkles, ShoppingBag, GraduationCap, Gift, Shield, Flame, MountainSnow, Ticket, Heart, Trophy, BookOpen, Download, Trash2, AlertTriangle, RotateCcw } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { api } from "@/lib/api";
 import { usePaymentProviders } from "@/lib/providers";
@@ -31,6 +31,11 @@ export default function Profile() {
   const [cancelTarget, setCancelTarget] = useState(null);
   const [cancelBusy, setCancelBusy] = useState(false);
   const [downloads, setDownloads] = useState([]);
+  const [delOpen, setDelOpen] = useState(false);
+  const [delPassword, setDelPassword] = useState("");
+  const [delReason, setDelReason] = useState("");
+  const [delBusy, setDelBusy] = useState(false);
+  const [delScheduledAt, setDelScheduledAt] = useState(null);
   const { paypal: paypalAvailable } = usePaymentProviders();
 
   const refundPreview = (r) => {
@@ -63,9 +68,33 @@ export default function Profile() {
         setRetreats(r.data || []);
         setCredit(c.data?.store_credit || 0);
         api.get("/me/downloads").then(({ data }) => setDownloads(data || [])).catch(() => setDownloads([]));
+        api.get("/me/account/status").then(({ data }) => setDelScheduledAt(data?.deletion_scheduled_at || null)).catch(() => {});
       } catch { setBookings([]); }
     })();
   }, []);
+
+  const requestDeletion = async () => {
+    setDelBusy(true);
+    try {
+      const { data } = await api.delete("/me/account", { data: { password: delPassword || null, reason: delReason || null } });
+      setDelScheduledAt(data?.deletion_scheduled_at || null);
+      setDelOpen(false); setDelPassword(""); setDelReason("");
+      toast.success("Account scheduled for deletion. You can cancel within 30 days.");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not delete account");
+    } finally { setDelBusy(false); }
+  };
+
+  const cancelDeletion = async () => {
+    setDelBusy(true);
+    try {
+      await api.post("/me/account/cancel-deletion");
+      setDelScheduledAt(null);
+      toast.success("Welcome back — your account is active again.");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not cancel");
+    } finally { setDelBusy(false); }
+  };
 
   const redeemGift = async () => {
     if (!gcCode.trim()) return toast.error("Enter a gift card code.");
@@ -369,6 +398,39 @@ export default function Profile() {
           )}
         </section>
 
+        {/* Danger zone — account deletion (GDPR / store compliance) */}
+        <section data-testid="profile-danger-zone" className="rounded-3xl bg-white border border-[#EED9D2] p-6">
+          <div className="flex items-center gap-2 mb-2">
+            <AlertTriangle className="h-4 w-4 text-[#B25A45]" />
+            <h3 className="serif text-lg text-[#1C221F]">Delete account</h3>
+          </div>
+          {delScheduledAt ? (
+            <div data-testid="deletion-scheduled-banner">
+              <p className="text-sm text-[#6B7269]">
+                {"Your account is scheduled for permanent deletion on "}
+                <strong className="text-[#1C221F]">{new Date(delScheduledAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}</strong>
+                {". You can cancel any time before then."}
+              </p>
+              <button onClick={cancelDeletion} disabled={delBusy} data-testid="cancel-deletion-btn"
+                className="pill pill-primary mt-4 disabled:opacity-60">
+                <RotateCcw className="h-4 w-4" /> Cancel deletion
+              </button>
+            </div>
+          ) : (
+            <div>
+              <p className="text-sm text-[#6B7269]">
+                Permanently delete your account and personal data. Your account is deactivated
+                immediately and erased after a 30-day grace period. You can restore it by signing
+                back in within 30 days.
+              </p>
+              <button onClick={() => setDelOpen(true)} data-testid="delete-account-btn"
+                className="pill mt-4 !bg-white !border !border-[#B25A45] !text-[#B25A45] hover:!bg-[#FBF1EE]">
+                <Trash2 className="h-4 w-4" /> Delete my account
+              </button>
+            </div>
+          )}
+        </section>
+
         <button
           onClick={handleLogout}
           data-testid="profile-signout"
@@ -377,6 +439,41 @@ export default function Profile() {
           <LogOut className="h-4 w-4" /> Sign out
         </button>
       </div>
+
+      <AlertDialog open={delOpen} onOpenChange={setDelOpen}>
+        <AlertDialogContent data-testid="delete-account-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete your account?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This deactivates your account now and permanently deletes it and your personal data
+              after 30 days. You can cancel by signing back in before then. Confirm with your password.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-3 py-1">
+            <input
+              type="password" value={delPassword} onChange={(e) => setDelPassword(e.target.value)}
+              data-testid="delete-account-password" placeholder="Your password"
+              className="w-full rounded-2xl border border-[#E5E6DF] px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#B25A45]"
+            />
+            <textarea
+              rows={2} value={delReason} onChange={(e) => setDelReason(e.target.value)}
+              data-testid="delete-account-reason" placeholder="Reason (optional)"
+              className="w-full rounded-2xl border border-[#E5E6DF] px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#B25A45]"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="delete-account-cancel">Keep my account</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => { e.preventDefault(); requestDeletion(); }}
+              disabled={delBusy}
+              data-testid="delete-account-confirm"
+              className="!bg-[#B25A45] hover:!bg-[#9C4A38]"
+            >
+              {delBusy ? "Deleting…" : "Delete account"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

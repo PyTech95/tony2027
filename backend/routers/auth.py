@@ -103,7 +103,9 @@ async def login(payload: UserLogin, response: Response, request: Request):
         await _register_failed_attempt(identifier)
         raise HTTPException(401, "Invalid email or password")
     if not user.get("active", True):
-        raise HTTPException(403, "Account disabled")
+        # Allow sign-in during the 30-day deletion grace period so the user can cancel/restore.
+        if not user.get("deletion_scheduled_at"):
+            raise HTTPException(403, "Account disabled")
     await db.login_attempts.delete_one({"identifier": identifier})  # clear on success
     token = create_access_token(user["id"], email, user["role"], remember=payload.remember)
     cookie_age = (30 if payload.remember else (1 if payload.remember is False else 7)) * 86400

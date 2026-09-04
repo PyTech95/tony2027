@@ -6,6 +6,7 @@ import logging
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.utils import formataddr
+from datetime import datetime
 from typing import Optional
 
 logger = logging.getLogger("tony-yoga.email")
@@ -269,3 +270,59 @@ async def send_quiz_result(to: str, program: Optional[dict], membership: Optiona
                  "Create your free account" if signup_url else None, signup_url)
     text = "Your Find Your Path result — " + (program.get("title") if program else "your plan")
     return await send_email(to, "Your Find Your Path result · Tony Yoga", html, text)
+
+
+
+async def send_account_deletion_scheduled(to: str, name: Optional[str], purge_at: str) -> bool:
+    """Confirm to a user that their account is scheduled for deletion (30-day grace)."""
+    if not to:
+        return False
+    first = (name or "").split(" ")[0] if name else "there"
+    app_url = os.environ.get("FRONTEND_URL", "").rstrip("/") or None
+    try:
+        when = datetime.fromisoformat(purge_at).strftime("%d %B %Y")
+    except Exception:
+        when = purge_at
+    body = (
+        f"Hi {first}, we've received your request to delete your TonYoga account.<br/><br/>"
+        f"Your account has been deactivated now and will be <strong>permanently deleted on {when}</strong>. "
+        "If you change your mind before then, simply sign back in and choose "
+        "<strong>Cancel deletion</strong> in your profile to restore everything.<br/><br/>"
+        "After the 30-day window your personal data is erased and cannot be recovered."
+    )
+    html = _wrap("Your account is scheduled for deletion.", body,
+                 "Sign in to cancel" if app_url else None, app_url)
+    return await send_email(to, "Your TonYoga account deletion request", html,
+                            f"Your TonYoga account will be permanently deleted on {when}. Sign in before then to cancel.")
+
+
+async def send_deletion_request_ack(to: str) -> bool:
+    """Acknowledge a public (no-login) data-deletion request."""
+    if not to:
+        return False
+    body = (
+        "We've received your request to delete your TonYoga account and personal data.<br/><br/>"
+        "Our team will process it within 30 days. If you can still sign in, you can also delete "
+        "your account instantly from your profile.<br/><br/>"
+        "If you didn't make this request, you can safely ignore this email."
+    )
+    html = _wrap("We received your deletion request.", body)
+    return await send_email(to, "Your TonYoga data-deletion request", html,
+                            "We received your TonYoga data-deletion request and will process it within 30 days.")
+
+
+async def send_deletion_request_admin(email: str, reason: str) -> None:
+    """Notify the team of a public deletion request so they can action it."""
+    body = (
+        f"A data-deletion request was submitted via the public form.<br/><br/>"
+        f"<strong>Email:</strong> {email}<br/>"
+        f"<strong>Reason:</strong> {reason or '—'}<br/><br/>"
+        "Please locate and delete this account/data within 30 days to stay compliant."
+    )
+    html = _wrap("New data-deletion request", body)
+    for admin_to in RETREAT_ADMIN_EMAILS:
+        try:
+            await send_email(admin_to, f"Data-deletion request · {email}", html,
+                             f"Data-deletion request for {email}. Reason: {reason or '—'}")
+        except Exception:
+            pass
