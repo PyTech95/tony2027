@@ -457,3 +457,10 @@ User choices: Printful auto-confirm BUT only on LIVE payments (skip in sandbox);
 - VERIFIED: testing_agent iteration_54 — backend 10/10 pytest, frontend 100% (all legal pages, footer links, public request form, in-app schedule/wrong-pw-401/scheduled-banner/cancel/grace-login). Fixed the one cosmetic banner whitespace bug after.
 - OPTIONAL follow-ups (non-blocking, from tester): rate-limit the public deletion-request endpoint; confirm no personal data hides under non-user_id keys; normalise deletion_scheduled_at to Z-ISO for the purge lexicographic compare.
 - Mobile submission: PWA installable + Capacitor config already present (/app/MOBILE_BUILD.md). Store console needs the /privacy + /account-deletion URLs and a Data Safety disclosure (see /app/STORE_SUBMISSION.md).
+
+## PayPal LIVE enabled (2026-06)
+- User pasted LIVE PayPal REST credentials. Detected as LIVE (OAuth 200 on api-m.paypal.com, 401 on sandbox).
+- Saved via PATCH /admin/settings (DB app_settings, secret masked): paypal_enabled=true, paypal_mode=live, paypal_client_id, paypal_client_secret.
+- Verified: POST /admin/paypal/verify → ok, "Connected to PayPal (live)."; created a REAL Orders v2 order (drop_in €22) → production approve URL https://www.paypal.com/checkoutnow?token=... (NOT captured — no money moved). /checkout/providers → {paypal:true, primary:"paypal", paypal_mode:"live"}. Storefront PaymentButtons show "PayPal · Pay securely" as primary + "Or pay with card" fallback.
+- IMPORTANT SIDE EFFECT: _is_live_payments() now returns TRUE (paypal_mode==live), so Printful auto-fulfillment (try_auto_fulfill_order) will AUTO-CONFIRM real print orders on paid physical-cart checkouts. Kill switch: setting printful_fulfill_enabled=false. Ensure Printful billing is set.
+- Stripe CARD fallback still returns 503 (placeholder key sk_test_emergent) — add a real sk_live_ key in Admin → Settings if card payments are wanted; PayPal alone is fully functional.
